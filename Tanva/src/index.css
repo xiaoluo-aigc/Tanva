@@ -1,0 +1,126 @@
+@import './styles/scrollbar.css';
+@import './styles/markdown.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* shadcn/ui CSS 变量 */
+@layer base {
+  :root {
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --border: 214.3 31.8% 91.4%;
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+  }
+
+  .dark {
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+  }
+}
+
+/* 基础重置样式 */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  background-color: #ffffff;
+  color: #1f2937;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ==================== 自定义光标系统 ==================== */
+
+/* 定义光标 SVG */
+@layer base {
+  :root {
+    --cursor-t: url("data:image/svg+xml,%3Csvg width='20' height='20' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg%3E%3Crect x='2' y='3' width='16' height='2' fill='%232563eb' rx='1'/%3E%3Crect x='9' y='3' width='2' height='12' fill='%232563eb' rx='1'/%3E%3C/g%3E%3C/svg%3E");
+  }
+}
+
+/* 基础元素光标 */
+* {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* 确保所有交互元素都有光标 */
+a, button, input[type="button"], input[type="submit"], select, textarea, [role="button"], [role="link"] {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* Canvas 元素特殊处理 */
+canvas {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* SVG 元素 */
+svg {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* ReactFlow 相关元素 */
+.react-flow {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+.react-flow__pane {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+.react-flow__node {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+.react-flow__edge {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* Flow overlay */
+.tanva-flow-overlay {
+  cursor: var(--cursor-t) 10 5, auto !important;
+}
+
+/* 保留特定操作的光标 */
+input[type="text"],
+input[type="number"],
+textarea,
+[contenteditable="true"] {
+  cursor: text !important;
+}
+
+/* 禁用状态 */
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed !important;
+}
+
+/* 可拖拽元素 */
+[draggable="true"] {
+  cursor: grab !important;
+}
+
+[draggable="true"]:active {
+  cursor: grabbing !important;
+}

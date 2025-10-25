@@ -1,0 +1,99 @@
+/* 让整个 Flow 覆盖层默认穿透 */
+.tanva-flow-overlay {
+  pointer-events: none;
+}
+
+/* 允许交互的子元素重新启用事件 */
+.tanva-flow-overlay .react-flow__node,
+.tanva-flow-overlay .react-flow__edge,
+.tanva-flow-overlay .react-flow__handle,
+.tanva-flow-overlay .react-flow__controls,
+.tanva-flow-overlay .react-flow__minimap,
+.tanva-flow-overlay .react-flow__node-resizer,
+.tanva-flow-overlay .react-flow__node-resizer-handle,
+.tanva-flow-overlay .tanva-flow-toolbar,
+.tanva-flow-overlay .tanva-add-panel {
+  pointer-events: auto;
+}
+
+/* 禁用Pane捕获，避免空白区域吞事件 */
+.tanva-flow-overlay .react-flow__pane {
+  pointer-events: none !important;
+}
+
+/* 可选：降低背景干扰 */
+.tanva-flow-overlay .react-flow__background {
+  opacity: 0.6;
+  z-index: -1 !important; /* 将点阵放到所有Flow子元素之下 */
+  position: absolute; /* 确保可应用z-index */
+}
+
+/* ==================== 连线选择优化 ==================== */
+
+/* 连线容易被选中的关键：增加击中检测区域 */
+.react-flow__edge-path {
+  stroke-width: 2px;
+  transition: stroke-width 0.15s ease;
+}
+
+/* 鼠标悬停时突出显示连线，增大笔画宽度 */
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 6px;
+}
+
+/* 被选中的连线也要显示视觉反馈 */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 4px;
+}
+
+/* 为连线的底层添加隐形击中区域（提高可选性）*/
+.react-flow__edge {
+  position: relative;
+}
+
+.react-flow__edge-path {
+  /* 添加外发光效果提示可选性 */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.1));
+  cursor: pointer;
+}
+
+/* 鼠标悬停时显示吸附效果 */
+.react-flow__edge:hover .react-flow__edge-path {
+  filter: drop-shadow(0 0 4px rgba(37, 99, 235, 0.3));
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.6));
+}
+
+/* 连接线拖拽时，禁用全局文本选择以避免页面出现蓝色选区 */
+.tanva-no-select, .tanva-no-select * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+/* 去除节点被选中时的蓝色外框/阴影 */
+.tanva-flow-overlay .react-flow__node.selected {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 通用小提示样式（用于句柄悬停提示） */
+.flow-tooltip {
+  position: absolute;
+  background: #111827;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  pointer-events: none;
+}
+
+/* 擦除模式下的悬停高亮（节点） */
+.tanva-flow-overlay .react-flow__node.eraser-hover > div {
+  box-shadow: 0 0 0 2px #3b82f6 inset !important; /* tailwind blue-500 */
+  border-radius: 8px;
+}
