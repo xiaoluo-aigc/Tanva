@@ -17,6 +17,13 @@ const LS_USER_KEY = 'mock_user';
 const LS_USERS_KEY = 'mock_users';
 const FIXED_SMS_CODE = '336699';
 
+function normalizePhone(phone?: string) {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  const match = digits.match(/1[3-9]\d{9}$/);
+  return match ? match[0] : digits;
+}
+
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -105,16 +112,18 @@ export const authApi = {
     }
   },
   async register(payload: { phone: string; password: string; name?: string; email?: string }) {
+    const rawPhone = payload.phone ?? '';
+    const phone = normalizePhone(rawPhone);
     if (isMock) {
       await delay(300);
       const users = readUsers();
-      const exists = users.find((u) => u.phone === payload.phone);
+      const exists = users.find((u) => u.phone === phone || u.phone === rawPhone);
       if (exists) throw new Error('用户已存在');
       const user: UserInfo = {
         id: `u_${Date.now()}`,
-        email: payload.email || `${payload.phone}@mock.local`,
-        phone: payload.phone,
-        name: payload.name || `用户${payload.phone.slice(-4)}`,
+        email: payload.email || `${phone}@mock.local`,
+        phone,
+        name: payload.name || `用户${phone.slice(-4)}`,
         role: 'user',
       };
       // persist optional phone for strict SMS login
@@ -128,16 +137,18 @@ export const authApi = {
     const res = await fetch(`${base}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, phone }),
       credentials: 'include',
     });
     return json<{ user: UserInfo }>(res);
   },
   async login(payload: { phone: string; password: string }) {
+    const rawPhone = payload.phone ?? '';
+    const phone = normalizePhone(rawPhone);
     if (isMock) {
       await delay(300);
       const users = readUsers();
-      const user = users.find((u) => u.phone === payload.phone);
+      const user = users.find((u) => u.phone === phone || u.phone === rawPhone);
       if (!user) {
         throw new Error('用户不存在，请先注册');
       }
@@ -147,7 +158,7 @@ export const authApi = {
     const res = await fetch(`${base}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, phone }),
       credentials: 'include',
     });
     const out = await json<{ user: UserInfo }>(res);
@@ -156,12 +167,20 @@ export const authApi = {
     return out;
   },
   async loginWithSms(payload: { phone: string; code: string }) {
+    const rawPhone = payload.phone ?? '';
+    const phone = normalizePhone(rawPhone);
     if (isMock) {
       await delay(300);
-      if (!payload.phone) throw new Error('请输入手机号');
+      if (!phone) throw new Error('请输入手机号');
       if (payload.code !== FIXED_SMS_CODE) throw new Error('验证码错误（使用 336699）');
       const users = readUsers();
-      const user = users.find((u) => u.phone === payload.phone || u.email === `${payload.phone}@mock.local`);
+      const user = users.find(
+        (u) =>
+          u.phone === phone ||
+          u.phone === rawPhone ||
+          u.email === `${phone}@mock.local` ||
+          u.email === `${rawPhone}@mock.local`,
+      );
       if (!user) throw new Error('用户不存在，请先注册');
       saveSession(user);
       return { user };
@@ -169,7 +188,7 @@ export const authApi = {
     const res = await fetch(`${base}/api/auth/login-sms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, phone }),
       credentials: 'include',
     });
     const out = await json<{ user: UserInfo }>(res);
@@ -177,6 +196,8 @@ export const authApi = {
     return out;
   },
   async sendSms(payload: { phone: string }) {
+    const rawPhone = payload.phone ?? '';
+    const phone = normalizePhone(rawPhone);
     if (isMock) {
       await delay(300);
       return { ok: true } as { ok: true };
@@ -184,7 +205,7 @@ export const authApi = {
     const res = await fetch(`${base}/api/auth/send-sms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ phone }),
     });
     return json<{ ok: boolean }>(res);
   },
