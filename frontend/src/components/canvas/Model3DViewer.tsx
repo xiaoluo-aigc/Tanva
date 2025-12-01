@@ -1,8 +1,9 @@
 import { logger } from '@/utils/logger';
-import React, { useRef, useEffect, useState, Suspense, useCallback } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import React, { useRef, useEffect, useState, Suspense, useCallback, useMemo } from 'react';
+import { Canvas, useThree, useLoader } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import type { Model3DData, Model3DCameraState } from '@/services/model3DUploadService';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
@@ -13,22 +14,23 @@ interface Model3DViewerProps {
   isSelected?: boolean;
   drawMode?: string; // 当前绘图模式
   onCameraChange?: (camera: Model3DCameraState) => void;
-  isResizing?: boolean; // 是否正在调整容器大小
+  useRayTracing?: boolean;
+  onTracingBackendChange?: (backend: 'webgl' | 'webgpu' | null) => void;
 }
 
-const TARGET_MODEL_SIZE = 5.5;
-const MAX_MODEL_UPSCALE = 5.0;
-const MODEL_SCALE_MULTIPLIER = 12; // 控制模型基础体积，值越大初始尺寸越大
-const CONTAINER_SCALE_MULTIPLIER = 7; // 控制容器对缩放的影响，值越大越不受框限制
-const BASELINE_SCALE_MULTIPLIER = 6; // 保障最小放大倍数
-const CAMERA_DISTANCE_MULTIPLIER = 0.7;
+const TARGET_MODEL_SIZE = 3.5;
 const MIN_CAMERA_DISTANCE = 1.5;
+const CAMERA_FIT_PADDING = 1.25;
+const CAMERA_FOV = 50;
+const MIN_CONTAINER_REFERENCE = 420;
+const MIN_CONTAINER_SCALE = 0.9;
+const DEFAULT_ENV_MAP = '/lgltracer/envMaps/pillars.hdr';
 const EPSILON = 1e-4;
+type TracerBackend = 'webgl' | 'webgpu';
 
 const computeScaleFactor = (maxDimension: number) => {
   const safeDimension = Math.max(maxDimension, Number.EPSILON);
-  const rawScale = TARGET_MODEL_SIZE / safeDimension;
-  return Math.min(rawScale * MODEL_SCALE_MULTIPLIER, MAX_MODEL_UPSCALE * MODEL_SCALE_MULTIPLIER);
+  return TARGET_MODEL_SIZE / safeDimension;
 };
 
 const arraysAlmostEqual = (a: readonly number[], b: readonly number[]) =>
@@ -39,19 +41,70 @@ const cameraStatesEqual = (a: Model3DCameraState, b: Model3DCameraState) =>
   arraysAlmostEqual(a.target, b.target) &&
   arraysAlmostEqual(a.up, b.up);
 
+const createFittedCameraState = (box: THREE.Box3): Model3DCameraState => {
+  const size = box.getSize(new THREE.Vector3());
+  const maxDimension = Math.max(size.x, size.y, size.z, Number.EPSILON);
+  const radius = maxDimension * 0.5;
+  const fovInRadians = (CAMERA_FOV * Math.PI) / 180;
+  const distance = Math.max((radius * CAMERA_FIT_PADDING) / Math.sin(fovInRadians / 2), MIN_CAMERA_DISTANCE);
+  const direction = new THREE.Vector3(1.25, 1, 1.35).normalize();
+  const position = direction.multiplyScalar(distance);
+
+  return {
+    position: [position.x, position.y, position.z],
+    target: [0, 0, 0],
+    up: [0, 1, 0],
+  };
+};
+
+const cloneSceneForTracing = (source: THREE.Object3D) => {
+  return source.clone(true);
+};
+
+const disposeObject3D = (object?: THREE.Object3D | null) => {
+  if (!object) return;
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if ((mesh as any).isMesh) {
+      if (mesh.geometry) {
+        mesh.geometry.dispose();
+      }
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((material) => material?.dispose?.());
+      } else {
+        mesh.material?.dispose?.();
+      }
+    }
+  });
+};
+
+const addTracerLights = (scene: THREE.Scene) => {
+  const ambient = new THREE.AmbientLight('#ffffff', 0.8);
+  const hemi = new THREE.HemisphereLight('#f8fafc', '#cbd5e1', 1);
+  const dirMain = new THREE.DirectionalLight('#ffffff', 1.6);
+  dirMain.position.set(6, 8, 6);
+  const dirFill = new THREE.DirectionalLight('#e2e8f0', 0.9);
+  dirFill.position.set(-6, 6, -4);
+  const pointTop = new THREE.PointLight('#ffffff', 0.45);
+  pointTop.position.set(0, 7, 0);
+  const pointSide = new THREE.PointLight('#f1f5f9', 0.35);
+  pointSide.position.set(2, 3, -3);
+  scene.add(ambient, hemi, dirMain, dirFill, pointTop, pointSide);
+};
+
 // 3D模型组件
 function Model3D({
   modelPath,
   width,
   height,
   onLoaded,
-  isResizing = false
+  onSceneReady
 }: {
   modelPath: string;
   width: number;
   height: number;
   onLoaded?: (boundingBox: THREE.Box3) => void;
-  isResizing?: boolean;
+  onSceneReady?: (scene: THREE.Object3D, boundingBox: THREE.Box3) => void;
 }) {
   const meshRef = useRef<THREE.Group>(null);
   const { scene } = useGLTF(modelPath);
@@ -166,6 +219,9 @@ function Model3D({
       if (onLoaded) {
         onLoaded(box);
       }
+      if (onSceneReady) {
+        onSceneReady(clonedScene.clone(true), box.clone());
+      }
 
       if (meshRef.current) {
         meshRef.current.add(clonedScene);
@@ -183,74 +239,18 @@ function Model3D({
     };
   }, [scene, onLoaded]);
 
-  // 根据容器大小动态调整缩放（仅在用户主动调整容器大小时更新，避免操作3D模型时抽搐）
-  const scaleUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const lastWidthRef = useRef(width);
-  const lastHeightRef = useRef(height);
-  const isInitialMountRef = useRef(true);
-  
   useEffect(() => {
-    // 根据3D框（容器）的实际大小来计算模型缩放
-    // 使用容器较小边作为基准，让模型大小与容器大小成正比
-    const minContainerSize = Math.min(width, height);
-    const referenceSize = 360; // 参考尺寸越小，默认越大
-    const containerScale = minContainerSize / referenceSize;
-    const dynamicScale = baseScaleFactor * containerScale * CONTAINER_SCALE_MULTIPLIER;
-    const baselineScale = baseScaleFactor * BASELINE_SCALE_MULTIPLIER;
-    const finalScale = Math.max(dynamicScale, baselineScale);
+    if (!baseScaleFactor) return;
+    setAutoScale([baseScaleFactor, baseScaleFactor, baseScaleFactor]);
+  }, [baseScaleFactor]);
 
-    // 首次挂载时，直接设置缩放，不延迟
-    if (isInitialMountRef.current) {
-      isInitialMountRef.current = false;
-      setAutoScale([finalScale, finalScale, finalScale]);
-      lastWidthRef.current = width;
-      lastHeightRef.current = height;
-      return;
-    }
-    
-    // 如果正在调整大小，立即更新缩放（用户主动调整容器）
-    if (isResizing) {
-      setAutoScale([finalScale, finalScale, finalScale]);
-      lastWidthRef.current = width;
-      lastHeightRef.current = height;
-      return;
-    }
-    
-    // 如果不在调整大小，计算尺寸变化量
-    const widthDiff = Math.abs(width - lastWidthRef.current);
-    const heightDiff = Math.abs(height - lastHeightRef.current);
-    
-    // 只有当尺寸变化超过很大阈值时才更新（说明是用户主动调整大小，而不是微小波动）
-    // 大幅提高阈值，避免操作3D模型时的任何尺寸变化触发更新
-    const threshold = 20; // 20像素的阈值，只有明显的大小变化才更新
-    
-    if (widthDiff < threshold && heightDiff < threshold) {
-      return;
-    }
-    
-    // 更新记录的尺寸
-    lastWidthRef.current = width;
-    lastHeightRef.current = height;
-    
-    // 清除之前的定时器
-    if (scaleUpdateTimerRef.current) {
-      clearTimeout(scaleUpdateTimerRef.current);
-    }
-    
-    // 使用较长的防抖延迟，确保只在用户停止调整大小时才更新
-    scaleUpdateTimerRef.current = setTimeout(() => {
-      // 使用requestAnimationFrame确保平滑更新
-      requestAnimationFrame(() => {
+  useEffect(() => {
+    if (!baseScaleFactor) return;
+    const minContainerSize = Math.max(Math.min(width, height), 1);
+    const containerScale = Math.max(minContainerSize / MIN_CONTAINER_REFERENCE, MIN_CONTAINER_SCALE);
+    const finalScale = baseScaleFactor * containerScale;
     setAutoScale([finalScale, finalScale, finalScale]);
-      });
-    }, 300); // 300ms防抖延迟，确保用户停止调整后才更新
-    
-    return () => {
-      if (scaleUpdateTimerRef.current) {
-        clearTimeout(scaleUpdateTimerRef.current);
-      }
-    };
-  }, [width, height, baseScaleFactor, isResizing]);
+  }, [width, height, baseScaleFactor]);
 
   return (
     <group ref={meshRef} scale={autoScale}>
@@ -266,7 +266,8 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
   isSelected = false,
   drawMode = 'select',
   onCameraChange,
-  isResizing = false,
+  useRayTracing = false,
+  onTracingBackendChange,
 }) => {
   const devicePixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
   const maxDpr = Math.min(devicePixelRatio, 1.75);
@@ -276,18 +277,167 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
     up: [0, 1, 0],
   }));
   const cameraStateRef = useRef<Model3DCameraState>(cameraState);
+  const modelBoundsRef = useRef<THREE.Box3 | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error] = useState<string | null>(null);
   const hasCustomCameraRef = useRef<boolean>(!!modelData.camera);
   const cameraChangeFrameRef = useRef<number | null>(null);
   const lastCameraEmitRef = useRef(0);
+  const modelSceneRef = useRef<THREE.Object3D | null>(null);
+  const [modelSceneVersion, setModelSceneVersion] = useState(0);
+  const tracerRef = useRef<any>(null);
+  const tracerSceneRef = useRef<THREE.Scene | null>(null);
+  const tracerCameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const tracerFrameRef = useRef<number | null>(null);
+  const tracerContainerRef = useRef<HTMLDivElement | null>(null);
+  const envTextureRef = useRef<THREE.DataTexture | null>(null);
+  const [rayTracingBackend, setRayTracingBackend] = useState<TracerBackend | null>(null);
+  const rayTracingBackendRef = useRef<TracerBackend | null>(null);
+  const [rayTracingError, setRayTracingError] = useState<string | null>(null);
 
   const onCameraChangeRef = useRef(onCameraChange);
   useEffect(() => {
     onCameraChangeRef.current = onCameraChange;
   }, [onCameraChange]);
 
+  const onTracingBackendChangeRef = useRef(onTracingBackendChange);
+  useEffect(() => {
+    onTracingBackendChangeRef.current = onTracingBackendChange;
+  }, [onTracingBackendChange]);
+
+  const notifyBackendChange = useCallback((next: TracerBackend | null) => {
+    if (rayTracingBackendRef.current === next) return;
+    rayTracingBackendRef.current = next;
+    setRayTracingBackend(next);
+    onTracingBackendChangeRef.current?.(next);
+  }, []);
+
+  const cleanupTracer = useCallback(() => {
+    if (tracerFrameRef.current) {
+      cancelAnimationFrame(tracerFrameRef.current);
+      tracerFrameRef.current = null;
+    }
+    if (tracerRef.current) {
+      try {
+        tracerRef.current.dispose?.();
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.warn('清理LGLTracer失败', error);
+        }
+      }
+      tracerRef.current = null;
+    }
+    if (tracerContainerRef.current) {
+      tracerContainerRef.current.innerHTML = '';
+    }
+    if (tracerSceneRef.current) {
+      disposeObject3D(tracerSceneRef.current);
+      tracerSceneRef.current = null;
+    }
+    tracerCameraRef.current = null;
+    if (envTextureRef.current) {
+      envTextureRef.current.dispose();
+      envTextureRef.current = null;
+    }
+    notifyBackendChange(null);
+  }, [notifyBackendChange]);
+
+  const createTracerInstance = useCallback(async (): Promise<{ tracer: any; backend: TracerBackend }> => {
+    if (typeof window === 'undefined') {
+      throw new Error('当前环境不支持光追渲染');
+    }
+
+    const supportsWebGPU = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
+    const loadModule = async (path: string) => {
+      if (typeof window === 'undefined') throw new Error('当前环境不支持光追渲染');
+      return import(
+        /* @vite-ignore */
+        new URL(path, window.location.href).href
+      );
+    };
+
+    if (supportsWebGPU) {
+      try {
+        const module: any = await loadModule('/lgltracer/lglTracer.webgpu.es.js');
+        const adapter = await (navigator as any).gpu.requestAdapter();
+        if (adapter) {
+          const device = await adapter.requestDevice();
+          const tracer = new module.LGLTracer(device, adapter);
+          return { tracer, backend: 'webgpu' };
+        }
+      } catch (error) {
+        console.warn('WebGPU光追初始化失败，回退到WebGL', error);
+      }
+    }
+
+    const module: any = await loadModule('/lgltracer/lglTracer.webgl.es.js');
+    return { tracer: new module.LGLTracer(), backend: 'webgl' };
+  }, []);
+
+  const applyCameraStateToTracer = useCallback((state: Model3DCameraState) => {
+    if (!tracerCameraRef.current) return;
+    tracerCameraRef.current.position.set(state.position[0], state.position[1], state.position[2]);
+    tracerCameraRef.current.up.set(state.up[0], state.up[1], state.up[2]);
+    const target = new THREE.Vector3(state.target[0], state.target[1], state.target[2]);
+    tracerCameraRef.current.lookAt(target);
+    tracerCameraRef.current.updateMatrixWorld(true);
+  }, []);
+
+  const startTracerLoop = useCallback(() => {
+    if (!tracerRef.current || !tracerCameraRef.current) return;
+    const renderLoop = () => {
+      tracerFrameRef.current = requestAnimationFrame(renderLoop);
+      tracerRef.current?.render(tracerCameraRef.current);
+    };
+    renderLoop();
+  }, []);
+
   const lastCameraStateRef = useRef<Model3DCameraState | null>(null);
+
+  const setupTracerScene = useCallback(async () => {
+    if (!tracerRef.current || !modelSceneRef.current) return;
+
+    const tracer = tracerRef.current;
+    tracer.toneMapping = 'ACES';
+    tracer.enableTileRender = false;
+    tracer.envMapIntensity = 1.5;
+    tracer.targetSampleCount = 180;
+
+    const scene = new THREE.Scene();
+    const modelClone = cloneSceneForTracing(modelSceneRef.current);
+    scene.add(modelClone);
+    addTracerLights(scene);
+    tracerSceneRef.current = scene;
+
+    const envMap = await new RGBELoader().loadAsync(DEFAULT_ENV_MAP);
+    envTextureRef.current = envMap;
+    tracer.environment = envMap.image;
+
+    const aspect = Math.max(width / Math.max(height, 1), 0.0001);
+    const camera = new THREE.PerspectiveCamera(CAMERA_FOV, aspect, 0.1, 2000);
+    if ((THREE as any).WebGPUCoordinateSystem) {
+      (camera as any).coordinateSystem = (THREE as any).WebGPUCoordinateSystem;
+    }
+    tracerCameraRef.current = camera;
+    applyCameraStateToTracer(cameraStateRef.current ?? cameraState);
+
+    tracer.setSize(width, height);
+
+    if (tracerContainerRef.current) {
+      tracerContainerRef.current.innerHTML = '';
+      tracerContainerRef.current.appendChild(tracer.canvas);
+      Object.assign(tracer.canvas.style, {
+        position: 'absolute',
+        inset: '0',
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        borderRadius: 'inherit'
+      });
+    }
+
+    await tracer.buildPipeline(scene, camera);
+  }, [width, height, applyCameraStateToTracer, cameraState]);
 
   useEffect(() => {
     cameraStateRef.current = cameraState;
@@ -330,7 +480,17 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
 
     const nextCamera = modelData.camera;
     hasCustomCameraRef.current = !!nextCamera;
-    if (!nextCamera) return;
+    if (!nextCamera) {
+      if (modelBoundsRef.current) {
+        const fittedState = createFittedCameraState(modelBoundsRef.current);
+        isUpdatingFromExternalRef.current = true;
+        setCameraState(fittedState);
+        requestAnimationFrame(() => {
+          isUpdatingFromExternalRef.current = false;
+        });
+      }
+      return;
+    }
     
     // 只有当值真正改变时才更新
     if (!cameraStatesEqual(nextCamera, cameraStateRef.current)) {
@@ -348,29 +508,83 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
     modelData.camera?.up?.join(',')
   ]);
 
-  const handleModelLoaded = (boundingBox: THREE.Box3) => {
+  useEffect(() => {
+    if (!useRayTracing || !modelSceneRef.current) {
+      cleanupTracer();
+      setRayTracingError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setRayTracingError(null);
+
+    (async () => {
+      try {
+        const { tracer, backend } = await createTracerInstance();
+        if (cancelled) {
+          tracer.dispose?.();
+          return;
+        }
+        tracerRef.current = tracer;
+        notifyBackendChange(backend);
+        await setupTracerScene();
+        startTracerLoop();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '光追初始化失败';
+        setRayTracingError(message);
+        cleanupTracer();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanupTracer();
+    };
+  }, [
+    useRayTracing,
+    modelSceneVersion,
+    createTracerInstance,
+    setupTracerScene,
+    cleanupTracer,
+    startTracerLoop,
+    notifyBackendChange
+  ]);
+
+  const handleModelLoaded = useCallback((boundingBox: THREE.Box3) => {
     setIsLoading(false);
+    modelBoundsRef.current = boundingBox.clone();
 
     if (!hasCustomCameraRef.current) {
-      const size = boundingBox.getSize(new THREE.Vector3());
-      const maxDimension = Math.max(size.x, size.y, size.z);
-      const scaleFactor = computeScaleFactor(maxDimension);
-      const scaledMaxDimension = maxDimension * scaleFactor;
-      const distance = Math.max(scaledMaxDimension * CAMERA_DISTANCE_MULTIPLIER, MIN_CAMERA_DISTANCE);
-      const defaultState: Model3DCameraState = {
-        position: [distance, distance, distance],
-        target: [0, 0, 0],
-        up: [0, 1, 0],
-      };
-      setCameraState(defaultState);
+      const fittedState = createFittedCameraState(boundingBox);
+      setCameraState(fittedState);
     }
-  };
+  }, []);
+
+  const handleModelSceneReady = useCallback((scene: THREE.Object3D, boundingBox: THREE.Box3) => {
+    modelSceneRef.current = scene;
+    setModelSceneVersion((version) => version + 1);
+    modelBoundsRef.current = boundingBox.clone();
+  }, []);
+
+  useEffect(() => {
+    if (!useRayTracing || !tracerRef.current || !tracerCameraRef.current) return;
+    const aspect = Math.max(width / Math.max(height, 1), 0.0001);
+    tracerCameraRef.current.aspect = aspect;
+    tracerCameraRef.current.updateProjectionMatrix();
+    tracerRef.current.setSize(width, height);
+  }, [width, height, useRayTracing]);
+
+  useEffect(() => {
+    if (!useRayTracing) return;
+    applyCameraStateToTracer(cameraState);
+  }, [cameraState, applyCameraStateToTracer, useRayTracing]);
 
   useEffect(() => () => {
+    cleanupTracer();
     if (import.meta.env.DEV) {
       logger.debug('Model3DViewer组件卸载，清理3D资源');
     }
-  }, []);
+  }, [cleanupTracer]);
 
   const pointerEvents = drawMode === 'select' || isSelected ? 'auto' : 'none';
   const controlsEnabled = drawMode === 'select' && isSelected;
@@ -412,49 +626,75 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
         </div>
       ) : (
         <>
-          <Canvas
-            camera={{
-              position: cameraState.position,
-              fov: 50,
-              near: 0.1,
-              far: 1000
-            }}
-            dpr={[1, maxDpr]}
-            gl={{
-              alpha: true,
-              antialias: true,
-              preserveDrawingBuffer: true,
-              powerPreference: 'high-performance',
-              toneMapping: THREE.ACESFilmicToneMapping,
-              toneMappingExposure: 1.15,
-              outputColorSpace: THREE.SRGBColorSpace
-            }}
+          <div style={{ position: 'absolute', inset: 0 }}>
+            <Canvas
+              camera={{
+                position: cameraState.position,
+                fov: CAMERA_FOV,
+                near: 0.1,
+                far: 1000
+              }}
+              dpr={[1, maxDpr]}
+              gl={{
+                alpha: true,
+                antialias: true,
+                preserveDrawingBuffer: true,
+                powerPreference: 'high-performance',
+                toneMapping: THREE.ACESFilmicToneMapping,
+                toneMappingExposure: 1.6,
+                outputColorSpace: THREE.SRGBColorSpace
+              }}
+              onCreated={({ gl }) => {
+                (gl as THREE.WebGLRenderer as any).physicallyCorrectLights = true;
+              }}
+              style={{
+                background: 'transparent',
+                pointerEvents,
+                opacity: useRayTracing ? 0 : 1,
+                transition: 'opacity 0.2s ease'
+              }}
+            >
+              
+              <Suspense fallback={null}>
+                <SceneEnvironment />
+                {/* 更自然的光照组合：柔和环境光 + 半球光 + 主/辅方向光 */}
+                <ambientLight color="#ffffff" intensity={0.8} />
+                <hemisphereLight args={['#f8fafc', '#cbd5e1', 1]} />
+                <directionalLight
+                  position={[6, 8, 6]}
+                  intensity={1.6}
+                  color="#ffffff"
+                  castShadow
+                  shadow-mapSize-width={2048}
+                  shadow-mapSize-height={2048}
+                />
+                <directionalLight position={[-6, 6, -4]} intensity={0.9} color="#e2e8f0" />
+                <pointLight position={[0, 7, 0]} intensity={0.45} color="#ffffff" />
+                <pointLight position={[2, 3, -3]} intensity={0.35} color="#f1f5f9" />
+
+                <Model3D
+                  modelPath={modelData.url || modelData.path || ''}
+                  width={width}
+                  height={height}
+                  onLoaded={handleModelLoaded}
+                  onSceneReady={handleModelSceneReady}
+                />
+
+                <CameraController cameraState={cameraState} enabled={controlsEnabled} onStateChange={setCameraState} />
+              </Suspense>
+            </Canvas>
+
+            <div
+              ref={tracerContainerRef}
             style={{
-              background: 'transparent',
-              pointerEvents
-            }}
-          >
-            
-            <Suspense fallback={null}>
-              {/* 更自然的光照组合：柔和环境光 + 半球光 + 主/辅方向光 */}
-              <ambientLight color="#ffffff" intensity={0.4} />
-              <hemisphereLight args={['#f8fafc', '#cbd5e1', 0.85]} />
-              <directionalLight position={[6, 8, 6]} intensity={1.2} color="#ffffff" />
-              <directionalLight position={[-6, 6, -4]} intensity={0.6} color="#e2e8f0" />
-              <pointLight position={[0, 7, 0]} intensity={0.35} color="#ffffff" />
-              <pointLight position={[2, 3, -3]} intensity={0.25} color="#f1f5f9" />
-
-              <Model3D
-                modelPath={modelData.url || modelData.path || ''}
-                width={width}
-                height={height}
-                onLoaded={handleModelLoaded}
-                isResizing={isResizing}
-              />
-
-              <CameraController cameraState={cameraState} enabled={controlsEnabled} onStateChange={setCameraState} />
-            </Suspense>
-          </Canvas>
+                position: 'absolute',
+                inset: 0,
+                opacity: useRayTracing ? 1 : 0,
+                transition: 'opacity 0.2s ease',
+                pointerEvents: 'none'
+              }}
+            />
+              </div>
 
           {isLoading && (
             <div
@@ -482,8 +722,72 @@ const Model3DViewer: React.FC<Model3DViewerProps> = ({
       )}
 
       {/* 边框已移动到Model3DContainer中，与控制点使用统一坐标系 */}
+      {useRayTracing && rayTracingBackend && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            padding: '2px 8px',
+            borderRadius: '999px',
+            background: 'rgba(15,23,42,0.65)',
+            color: '#e0f2fe',
+            fontSize: '11px',
+            letterSpacing: '0.05em'
+          }}
+        >
+          RT · {rayTracingBackend.toUpperCase()}
+        </div>
+      )}
+      {useRayTracing && rayTracingError && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 8,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(239, 68, 68, 0.9)',
+            color: '#fff',
+            fontSize: '12px',
+            padding: '6px 12px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.25)'
+          }}
+        >
+          光追失败：{rayTracingError}
+        </div>
+      )}
     </div>
   );
+};
+
+const SceneEnvironment: React.FC = () => {
+  const { scene, gl } = useThree();
+  const hdrTexture = useLoader(RGBELoader, DEFAULT_ENV_MAP);
+
+  const pmremGenerator = useMemo(() => new THREE.PMREMGenerator(gl), [gl]);
+  const envTexture = useMemo(() => {
+    const renderTarget = pmremGenerator.fromEquirectangular(hdrTexture);
+    const texture = renderTarget.texture;
+    renderTarget.dispose();
+    return texture;
+  }, [pmremGenerator, hdrTexture]);
+
+  useEffect(() => {
+    const previousEnv = scene.environment;
+    const previousBackground = scene.background;
+    scene.environment = envTexture;
+    scene.background = null;
+
+    return () => {
+      scene.environment = previousEnv ?? null;
+      scene.background = previousBackground ?? null;
+      envTexture?.dispose();
+      pmremGenerator.dispose();
+    };
+  }, [scene, envTexture, hdrTexture, pmremGenerator]);
+
+  return null;
 };
 
 export default Model3DViewer;

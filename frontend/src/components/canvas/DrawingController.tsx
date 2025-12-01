@@ -2661,6 +2661,11 @@ const DrawingController: React.FC<DrawingControllerProps> = ({ canvasRef }) => {
             isCapturePending={!!modelCapturePending[model.id]}
             showIndividualTools={!isGroupSelection}
             onSelect={(addToSelection) => handleModelSelectFromOverlay(model.id, !!addToSelection)}
+            isTracingEnabled={!!model.tracingEnabled}
+            tracingBackend={model.tracingBackend ?? null}
+            onToggleTracing={(targetModelId, enabled) => model3DTool.handleModel3DToggleTracing(targetModelId, enabled)}
+            onTracingBackendChange={(targetModelId, backend) => model3DTool.handleModel3DTracingBackendChange(targetModelId, backend)}
+            onResetCamera={() => model3DTool.handleModel3DResetCamera(model.id)}
           />
         );
       })}

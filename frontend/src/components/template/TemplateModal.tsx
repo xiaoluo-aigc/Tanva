@@ -83,6 +83,7 @@ const UserTemplateCard: React.FC<{
           flex: '0 0 50%',
           maxWidth: '50%',
         height: '100%',
+        borderRadius: 12,
         background: item.thumbnail ? 'transparent' : '#f3f4f6',
           display: 'flex',
           alignItems: 'center',
@@ -569,6 +570,7 @@ export default function TemplateModal({ isOpen, onClose, onInstantiateTemplate }
                         flex: '0 0 50%',
                         maxWidth: '50%',
                         height: '100%',
+                        borderRadius: 12,
                         background: item.thumbnail ? 'transparent' : '#f3f4f6',
                         display: 'flex',
                         alignItems: 'center',
@@ -577,7 +579,7 @@ export default function TemplateModal({ isOpen, onClose, onInstantiateTemplate }
                       }}
                     >
                       {item.thumbnail ? (
-                        <img src={item.thumbnail} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={item.thumbnail} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover',borderRadius: 12 }} />
                       ) : (
                         <div style={{ fontSize: 12, color: '#9ca3af' }}>暂无预览</div>
                       )}

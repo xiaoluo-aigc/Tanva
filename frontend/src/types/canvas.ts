@@ -50,6 +50,8 @@ export interface Model3DInstance {
   visible: boolean;
   selectionRect?: paper.Path;
   layerId?: string;
+  tracingEnabled?: boolean;
+  tracingBackend?: 'webgl' | 'webgpu' | null;
 }
 
 // 图片拖拽状态类型
@@ -89,6 +91,8 @@ export interface Model3DToolEventHandlers {
   onModel3DMove?: (modelId: string, newPosition: { x: number; y: number }) => void;
   onModel3DResize?: (modelId: string, newBounds: { x: number; y: number; width: number; height: number }) => void;
   onModel3DDelete?: (modelId: string) => void;
+  onModel3DResetCamera?: (modelId: string) => void;
+  onModel3DToggleTracing?: (modelId: string, enabled: boolean) => void;
 }
 
 // 绘图工具状态类型

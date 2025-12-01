@@ -1,0 +1,44 @@
+html,
+body {
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	background: #202124;
+}
+
+canvas {
+	display: block;
+}
+
+/* GUI */
+.lil-gui .title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.lil-gui .children .title {
+	padding-left: 6px;
+}
+
+.lil-gui .children .children .title {
+	padding-left: 8px;
+}
+
+.lil-gui.autoPlace {
+	top: 0px;
+	right: 2px;
+}
+
+.lil-gui.autoPlace.renderingGUI {
+	/* right: auto;
+    left: 2px; */
+}
+
+.lil-gui.autoPlace.meshGUI {
+	right: auto;
+	left: 2px;
+	top: 0px;
+}

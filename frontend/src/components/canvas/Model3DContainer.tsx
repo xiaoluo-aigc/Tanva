@@ -4,7 +4,7 @@ import { useCanvasStore } from '@/stores';
 import Model3DViewer from './Model3DViewer';
 import type { Model3DData, Model3DCameraState } from '@/services/model3DUploadService';
 import { Button } from '../ui/button';
-import { Camera, Trash2, Download } from 'lucide-react';
+import { Camera, Trash2, Download, RotateCcw, Zap } from 'lucide-react';
 import { LoadingSpinner } from '../ui/loading-spinner';
 import { downloadFile } from '@/utils/downloadHelper';
 import { logger } from '@/utils/logger';
@@ -26,6 +26,11 @@ interface Model3DContainerProps {
   onCapture?: (modelId: string) => void;
   isCapturePending?: boolean;
   showIndividualTools?: boolean;
+  onResetCamera?: (modelId: string) => void;
+  isTracingEnabled?: boolean;
+  tracingBackend?: 'webgl' | 'webgpu' | null;
+  onToggleTracing?: (modelId: string, enabled: boolean) => void;
+  onTracingBackendChange?: (modelId: string, backend: 'webgl' | 'webgpu' | null) => void;
 }
 
 const Model3DContainer: React.FC<Model3DContainerProps> = ({
@@ -45,6 +50,11 @@ const Model3DContainer: React.FC<Model3DContainerProps> = ({
   onCapture,
   isCapturePending = false,
   showIndividualTools = true,
+  onResetCamera,
+  isTracingEnabled = false,
+  tracingBackend = null,
+  onToggleTracing,
+  onTracingBackendChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -378,7 +388,8 @@ const Model3DContainer: React.FC<Model3DContainerProps> = ({
         isSelected={isSelected}
         drawMode={drawMode}
         onCameraChange={onCameraChange}
-        isResizing={isResizing}
+        useRayTracing={isTracingEnabled}
+        onTracingBackendChange={(backend) => onTracingBackendChange?.(modelId, backend)}
       />
 
       {/* 选中状态的边框线 - 四条独立边框，只在边框上响应拖拽 */}
@@ -555,6 +566,31 @@ const Model3DContainer: React.FC<Model3DContainerProps> = ({
             pointerEvents: 'auto',
           }}
         >
+          <Button
+            variant={isTracingEnabled ? 'default' : 'outline'}
+            size="sm"
+            className={`${actionButtonClass} ${isTracingEnabled ? 'bg-blue-600 text-white' : ''}`}
+            style={actionButtonStyle}
+            title={isTracingEnabled ? '关闭光追' : '开启光追'}
+            onClick={() => onToggleTracing?.(modelId, !isTracingEnabled)}
+          >
+            <Zap className={actionIconClass} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={actionButtonClass}
+            style={actionButtonStyle}
+            title="重置视角"
+            onClick={() => onResetCamera?.(modelId)}
+          >
+            <RotateCcw className={actionIconClass} />
+          </Button>
+          {isTracingEnabled && tracingBackend && (
+            <span className="text-[11px] uppercase tracking-wide text-slate-600">
+              {tracingBackend.toUpperCase()}
+            </span>
+          )}
           <Button
             variant="outline"
             size="sm"

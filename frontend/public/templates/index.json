@@ -9,12 +9,93 @@
     "path": "/templates/core/basic-text-to-image.json"
   },
   {
-    "id": "basic-dog",
+    "id": "img_to_img",
     "name": "Dog: Prompt → Generate",
     "category": "摄影",
     "description": "文本提示生成狗狗（仅生成节点示例）",
-    "tags": ["basic", "generate", "dog"],
-    "thumbnail": "/templates/thumbs/basic-dog.svg",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img01",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img01.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img02",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img02.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img03",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img03.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img04",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img04.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img05",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img05.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img06",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img06.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img07",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img.png",
+    "path": "/templates/core/img_to_img07.json"
+  },
+  {
+    "id": "img_to_img08",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img08.png",
+    "path": "/templates/core/basic-dog.json"
+  },
+  {
+    "id": "img_to_img09",
+    "name": "Dog: Prompt → Generate",
+    "category": "摄影",
+    "description": "文本提示生成狗狗（仅生成节点示例）",
+    "tags": ["小悠"],
+    "thumbnail": "/templates/thumbs/img_to_img09.png",
     "path": "/templates/core/basic-dog.json"
   }
 ]

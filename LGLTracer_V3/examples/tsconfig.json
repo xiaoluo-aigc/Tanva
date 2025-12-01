@@ -1,0 +1,29 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "lib": [
+            "ESNext",
+            "DOM"
+        ],
+        "moduleResolution": "Node",
+        "strict": true,
+        "sourceMap": true,
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "noEmit": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": false,
+        "stripInternal": true,
+        "strictPropertyInitialization": false,
+        "experimentalDecorators": true,
+		"noImplicitAny": false,
+		"forceConsistentCasingInFileNames": false,
+        "types": [
+            "vite/client",
+            "@webgpu/types",
+			"@types/three"
+        ],
+    },
+}

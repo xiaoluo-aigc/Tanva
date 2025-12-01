@@ -46,9 +46,13 @@ export const useModel3DTool = ({ context, canvasRef, eventHandlers = {}, setDraw
     const height = Math.abs(rect.height);
 
     // 最小尺寸限制（3D模型需要更大的空间）
-    const minSize = 520;
-    const finalWidth = Math.max(width, minSize);
-    const finalHeight = Math.max(height, minSize);
+    const viewSize = paper.view?.viewSize;
+    const preferredWidth = viewSize ? Math.min(viewSize.width * 0.45, 760) : 640;
+    const preferredHeight = preferredWidth * 0.75;
+    const minWidth = Math.max(preferredWidth, 560);
+    const minHeight = Math.max(preferredHeight, 420);
+    const finalWidth = Math.max(width, minWidth);
+    const finalHeight = Math.max(height, minHeight);
 
     // 创建占位框边框（虚线矩形）
     const placeholder = new paper.Path.Rectangle({
@@ -227,7 +231,9 @@ export const useModel3DTool = ({ context, canvasRef, eventHandlers = {}, setDraw
       bounds: paperBounds, // 存储Paper.js坐标
       isSelected: false, // 默认不选中，避免显示选择框
       visible: true,
-      selectionRect: selectionRect
+      selectionRect: selectionRect,
+      tracingEnabled: false,
+      tracingBackend: null
     };
 
     // 添加到3D模型实例数组
@@ -559,6 +565,77 @@ export const useModel3DTool = ({ context, canvasRef, eventHandlers = {}, setDraw
     }, 300);
   }, []);
 
+  const handleModel3DResetCamera = useCallback((modelId: string) => {
+    setModel3DInstances(prev => prev.map(model => {
+      if (model.id !== modelId) return model;
+
+      const updatedData: Model3DData = {
+        ...model.modelData,
+        camera: undefined,
+      };
+
+      try {
+        const modelGroup = paper.project.layers.flatMap(layer =>
+          layer.children.filter(child =>
+            child.data?.type === '3d-model' && child.data?.modelId === modelId
+          )
+        )[0];
+        if (modelGroup) {
+          if (!modelGroup.data) modelGroup.data = {};
+          modelGroup.data.camera = undefined;
+          if (modelGroup.data.modelData) {
+            modelGroup.data.modelData = { ...modelGroup.data.modelData, camera: undefined };
+          }
+        }
+      } catch (e) {
+        console.warn('重置3D模型摄像机状态失败:', e);
+      }
+
+      return { ...model, modelData: updatedData };
+    }));
+
+    if (eventHandlers.onModel3DResetCamera) {
+      try {
+        eventHandlers.onModel3DResetCamera(modelId);
+      } catch (error) {
+        logger.error('执行 onModel3DResetCamera 时出错', error);
+      }
+    }
+
+    try { paperSaveService.triggerAutoSave('model3d-reset-camera'); } catch {}
+    historyService.commit('reset-model3d-camera').catch(() => {});
+  }, [eventHandlers.onModel3DResetCamera]);
+
+  const handleModel3DToggleTracing = useCallback((modelId: string, enabled: boolean) => {
+    setModel3DInstances(prev => prev.map(model => {
+      if (model.id !== modelId) return model;
+      return {
+        ...model,
+        tracingEnabled: enabled,
+        tracingBackend: enabled ? model.tracingBackend ?? null : null
+      };
+    }));
+
+    if (eventHandlers.onModel3DToggleTracing) {
+      try {
+        eventHandlers.onModel3DToggleTracing(modelId, enabled);
+      } catch (error) {
+        logger.error('执行 onModel3DToggleTracing 时出错', error);
+      }
+    }
+  }, [eventHandlers.onModel3DToggleTracing]);
+
+  const handleModel3DTracingBackendChange = useCallback((modelId: string, backend: 'webgl' | 'webgpu' | null) => {
+    setModel3DInstances(prev => prev.map(model => {
+      if (model.id !== modelId) return model;
+      if (model.tracingBackend === backend) return model;
+      return {
+        ...model,
+        tracingBackend: backend
+      };
+    }));
+  }, []);
+
   useEffect(() => () => {
     Object.values(cameraChangeTimersRef.current).forEach((id) => window.clearTimeout(id));
     cameraChangeTimersRef.current = {};
@@ -761,6 +838,9 @@ export const useModel3DTool = ({ context, canvasRef, eventHandlers = {}, setDraw
     handleModel3DResize,
     handleModel3DDelete,
     handleModel3DCameraChange,
+    handleModel3DResetCamera,
+    handleModel3DToggleTracing,
+    handleModel3DTracingBackendChange,
 
     // 可见性同步
     syncModel3DVisibility,

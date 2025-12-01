@@ -2881,7 +2881,7 @@ function FlowInner() {
                             gap: 20,
                             border: '1px solid #e5e7eb',
                             borderRadius: 12,
-                            padding: '18px 20px',
+                            padding: '10px 10px',
                             background: '#fff',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
@@ -2908,9 +2908,10 @@ function FlowInner() {
                         >
                           <div
                             style={{
-                              flex: '0 0 50%',
-                              maxWidth: '50%',
+                              flex: '0 0 55%',
+                              maxWidth: '80%',
                               height: '100%',
+                              borderRadius: 8,
                               background: item.thumbnail ? 'transparent' : '#f3f4f6',
                               display: 'flex',
                               alignItems: 'center',
@@ -2927,7 +2928,7 @@ function FlowInner() {
                           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center' }}>
                             <div style={{ fontSize: 16, fontWeight: 600, color: '#111827' }}>{item.name}</div>
                             {item.description ? <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>{item.description}</div> : null}
-                            {item.tags?.length ? <div style={{ fontSize: 12, color: '#9ca3af' }}>标签：{item.tags.join(' / ')}</div> : null}
+                            {item.tags?.length ? <div style={{ fontSize: 12, color: '#9ca3af' }}>作者：{item.tags.join(' / ')}</div> : null}
                           </div>
                         </div>
                       ))}
