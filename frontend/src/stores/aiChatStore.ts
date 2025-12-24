@@ -16,6 +16,8 @@ import {
   generateTextResponseViaAPI,
   midjourneyActionViaAPI,
   generateVideoViaAPI,
+  generateWan26T2VViaAPI,
+  getWan26T2VTaskStatus,
 } from "@/services/aiBackendAPI";
 import { useUIStore } from "@/stores/uiStore";
 import { contextManager } from "@/services/contextManager";
@@ -898,6 +900,145 @@ export async function requestSora2VideoGeneration(
   options?.onProgress?.("解析视频响应", 85);
   return response.data;
 }
+
+export type Wan26T2VOptions = {
+  onProgress?: (stage: string, progress: number) => void;
+  size?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+  duration?: 5 | 10;
+  shot_type?: "single" | "multi";
+  forceAudio?: boolean;
+};
+
+export async function requestWan26T2VGeneration(
+  prompt: string,
+  audioDataOrUrl?: string | null,
+  options?: Wan26T2VOptions
+) {
+  options?.onProgress?.("提交 Wan2.6-t2v 请求", 20);
+  const projectId = useProjectContentStore.getState().projectId;
+
+  // 上传音频（如果是本地 data URL），否则直接使用远程 URL
+  let audioUrl: string | undefined = undefined;
+  if (audioDataOrUrl) {
+    if (/^https?:\/\//.test(audioDataOrUrl)) {
+      audioUrl = audioDataOrUrl;
+    } else if (audioDataOrUrl.includes("base64,")) {
+      options?.onProgress?.("上传音频到 OSS", 30);
+      const uploaded = await uploadAudioToOSS(audioDataOrUrl, projectId);
+      if (!uploaded) {
+        throw new Error("音频上传失败");
+      }
+      audioUrl = uploaded;
+    } else {
+      // 其他情况尝试直接使用原始值
+      audioUrl = audioDataOrUrl;
+    }
+  }
+
+  // T2V size 映射：前端显示宽高比，后端需要具体分辨率
+  const sizeMapping: Record<string, string> = {
+    "16:9": "1280*720",
+    "9:16": "720*1280",
+    "1:1": "960*960",
+    "4:3": "1088*832",
+    "3:4": "832*1088",
+  };
+
+  const mappedSize = options?.size ? sizeMapping[options.size] || options.size : undefined;
+
+  const payload = {
+    model: "wan2.6-t2v",
+    input: {
+      prompt: prompt,
+      audio_url: audioUrl,
+    },
+    parameters: {
+      size: mappedSize, // t2v 支持 size 参数，格式为 "1280*720" 等
+      duration: options?.duration ?? 5,
+      shot_type: options?.shot_type ?? "single",
+      // allow forcing audio flag true even if no audioUrl provided (some backends expect audio:true)
+      audio: options?.forceAudio ? true : !!audioUrl,
+    },
+  };
+
+  options?.onProgress?.("提交后端任务", 45);
+  const resp = await generateWan26T2VViaAPI(payload as any);
+  if (!resp.success || !resp.data) {
+    throw new Error(resp.error?.message || "Wan2.6-t2v 任务提交失败");
+  }
+  // 如果后端直接返回最终视频信息，直接返回
+  const initial = resp.data;
+  const extractVideoUrl = (obj: any) => {
+    if (!obj) return undefined;
+    return (
+      obj.videoUrl ||
+      obj.video_url ||
+      obj.output?.video_url ||
+      (Array.isArray(obj.output) && obj.output[0]?.video_url) ||
+      obj.raw?.output?.video_url ||
+      obj.raw?.video_url ||
+      obj.data?.videoUrl ||
+      obj.data?.video_url ||
+      undefined
+    );
+  };
+
+  const videoUrlDirect = extractVideoUrl(initial);
+  if (videoUrlDirect) {
+    options?.onProgress?.("生成完成", 95);
+    return initial;
+  }
+
+  // 否则若后端返回 taskId，则按需轮询（DashScope 建议 15s）
+  const taskId =
+    initial?.taskId ||
+    initial?.task_id ||
+    initial?.id ||
+    initial?.output?.task_id ||
+    initial?.result?.task_id ||
+    initial?.output?.[0]?.task_id ||
+    initial?.data?.task_id ||
+    initial?.data?.output?.task_id ||
+    initial?.data?.result?.task_id ||
+    initial?.data?.output?.[0]?.task_id;
+  if (!taskId) {
+    return initial;
+  }
+
+  options?.onProgress?.("任务已创建，开始轮询", 60);
+  const intervalMs = 15000;
+  const maxAttempts = 20; // 约 5 分钟
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // 等待后再查询（首次等待以避免立即查到 PENDING）
+    await new Promise((r) => setTimeout(r, intervalMs));
+    options?.onProgress?.("轮询任务状态", 60 + Math.round(((attempt + 1) / maxAttempts) * 30));
+    try {
+      const statusResp = await getWan26T2VTaskStatus(taskId);
+      if (!statusResp.success || !statusResp.data) {
+        continue;
+      }
+      const data = statusResp.data;
+      const status = (data?.status || data?.state || "").toString().toLowerCase();
+      if (status === "succeeded" || status === "success") {
+        const videoUrl =
+          extractVideoUrl(data) ||
+          extractVideoUrl(data?.result) ||
+          extractVideoUrl(data?.output) ||
+          undefined;
+        options?.onProgress?.("生成完成", 95);
+        return { ...data, videoUrl };
+      }
+      if (status === "failed" || status === "error") {
+        throw new Error(data?.error || data?.message || "视频生成失败");
+      }
+      // 否则继续轮询
+    } catch (err) {
+      // 忽略单次轮询异常，继续重试
+    }
+  }
+
+  throw new Error("视频生成超时，请稍后重试");
+}
 const blobToDataUrl = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1238,6 +1379,50 @@ export async function uploadImageToOSS(
   } catch (error) {
     console.error("❌ 图片上传异常:", error);
     return null;
+  }
+}
+
+// 音频上传到 OSS（支持 data URL 或 已是远程 URL 的直接返回）
+export async function uploadAudioToOSS(
+  audioDataOrUrl: string,
+  projectId?: string | null
+): Promise<string | null> {
+  try {
+    if (!audioDataOrUrl) return null;
+    // 远程 URL 直接返回
+    if (/^https?:\/\//.test(audioDataOrUrl)) return audioDataOrUrl;
+
+    // 期望 data URL 格式： data:audio/(wav|mpeg);base64,...
+    if (!audioDataOrUrl.includes("base64,")) {
+      console.warn("⚠️ 非支持的音频数据格式，跳过上传");
+      return null;
+    }
+
+    const blob = dataURLToBlob(audioDataOrUrl);
+    // 尝试推断 contentType
+    const mimeMatch = audioDataOrUrl.match(/^data:([^;]+);/);
+    const contentType = mimeMatch ? mimeMatch[1] : "audio/mpeg";
+
+    const result = await ossUploadService.uploadToOSS(blob, {
+      dir: "ai-chat-audios/",
+      projectId,
+      fileName: `ai-audio-${Date.now()}.mp3`,
+      contentType,
+      maxSize: 15 * 1024 * 1024, // 15MB
+    });
+
+    if (result.success && result.url) {
+      return result.url;
+    } else {
+      // 抛出具体错误，便于上层（UI）显示更详细信息
+      const errMsg = result.error || "音频上传失败";
+      console.error("❌ 音频上传失败:", errMsg);
+      throw new Error(errMsg);
+    }
+  } catch (error: any) {
+    console.error("❌ 音频上传异常:", error);
+    // 将错误向上抛出，调用处可以捕获并在 UI 显示详细信息
+    throw error;
   }
 }
 

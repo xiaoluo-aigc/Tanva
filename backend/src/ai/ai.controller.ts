@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
   InternalServerErrorException,
   Get,
+  Param,
   Optional,
   Req,
   BadRequestException,
@@ -866,6 +867,476 @@ export class AiController {
       inputImageCount,
       0,
     );
+  }
+
+  /**
+   * DashScope Wan2.6-t2v proxy endpoint
+   * 前端会把完整 payload 发到此处，后端负责添加 Authorization 并转发给 DashScope 创建任务
+   */
+  @Post('dashscope/generate-wan26-t2v')
+  async generateWan26T2VViaDashscope(@Body() body: any, @Req() req: any) {
+    return this.withCredits(req, 'wan26-video', 'wan2.6-t2v', async () => {
+      const dashKey = process.env.DASHSCOPE_API_KEY;
+      if (!dashKey) {
+        this.logger.error('DASHSCOPE_API_KEY not configured');
+        return {
+          success: false,
+          error: { message: 'DASHSCOPE_API_KEY not configured on server' },
+        };
+      }
+
+      const dashUrl =
+        'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis';
+
+      try {
+        const response = await fetch(dashUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${dashKey}`,
+          'X-DashScope-Async': 'enable',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return {
+          success: false,
+          error: {
+            code: `HTTP_${response.status}`,
+            message: data?.message || `DashScope HTTP ${response.status}`,
+            details: data,
+          },
+        };
+      }
+
+      // 若创建请求已经直接返回最终视频信息，则直接返回
+      const extractVideoUrl = (obj: any) =>
+        obj?.output?.video_url ||
+        obj?.video_url ||
+        obj?.videoUrl ||
+        (Array.isArray(obj?.output) && obj.output[0]?.video_url) ||
+        undefined;
+
+      const videoUrlDirect = extractVideoUrl(data);
+      if (videoUrlDirect) {
+        return { success: true, data };
+      }
+
+      // 尝试从创建响应中提取 task id（兼容多种字段位置）
+      const taskId =
+        data?.taskId ||
+        data?.task_id ||
+        data?.id ||
+        data?.output?.task_id ||
+        data?.result?.task_id ||
+        data?.output?.[0]?.task_id ||
+        data?.data?.task_id ||
+        data?.data?.output?.task_id;
+
+      if (!taskId) {
+        return { success: true, data };
+      }
+
+      // 后端代为轮询 task 状态，直到 SUCCEEDED 或失败或超时
+      const statusUrl = `https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(taskId)}`;
+      const intervalMs = 15000;
+      const maxAttempts = 40;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        try {
+          const statusResp = await fetch(statusUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${dashKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          if (!statusResp.ok) {
+            continue;
+          }
+          const statusData = await statusResp.json().catch(() => ({}));
+
+          const statusValue =
+            (statusData?.output?.task_status ||
+              statusData?.status ||
+              statusData?.state ||
+              statusData?.task_status ||
+              ''
+            ).toString().toLowerCase();
+
+          if (statusValue === 'succeeded' || statusValue === 'success') {
+            const finalVideoUrl =
+              extractVideoUrl(statusData) ||
+              extractVideoUrl(statusData?.result) ||
+              extractVideoUrl(statusData?.output) ||
+              undefined;
+            return {
+              success: true,
+              data: {
+                taskId,
+                status: statusValue,
+                videoUrl: finalVideoUrl,
+                video_url: finalVideoUrl,
+                output: { video_url: finalVideoUrl },
+                raw: statusData,
+              },
+            };
+          }
+
+          if (statusValue === 'failed' || statusValue === 'error') {
+            return { success: false, error: { message: 'DashScope task failed', details: statusData } };
+          }
+        } catch (err: any) {
+          continue;
+        }
+      }
+
+      return { success: false, error: { message: 'DashScope task polling timed out' } };
+    } catch (error: any) {
+      this.logger.error('❌ DashScope request exception', error);
+      return {
+        success: false,
+        error: { code: 'NETWORK_ERROR', message: error?.message || String(error) },
+      };
+    }
+    });
+  }
+
+  /**
+   * DashScope Wan2.6-i2v proxy endpoint
+   * 图生视频接口
+   */
+  @Post('dashscope/generate-wan2-6-i2v')
+  async generateWan26I2VViaDashscope(@Body() body: any, @Req() req: any) {
+    return this.withCredits(req, 'wan26-video', 'wan2.6-i2v', async () => {
+      const dashKey = process.env.DASHSCOPE_API_KEY;
+    if (!dashKey) {
+      this.logger.error('DASHSCOPE_API_KEY not configured');
+      return {
+        success: false,
+        error: { message: 'DASHSCOPE_API_KEY not configured on server' },
+      };
+    }
+
+    const dashUrl =
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis';
+
+    try {
+      const response = await fetch(dashUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${dashKey}`,
+          'X-DashScope-Async': 'enable',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        this.logger.error('DashScope i2v create task failed', {
+          status: response.status,
+          body: data,
+        });
+        return {
+          success: false,
+          error: {
+            code: `HTTP_${response.status}`,
+            message: data?.message || `DashScope HTTP ${response.status}`,
+            details: data,
+          },
+        };
+      }
+
+      this.logger.log('✅ DashScope i2v task created', { resultPreview: JSON.stringify(data).slice(0, 200) });
+
+      const extractVideoUrl = (obj: any) =>
+        obj?.output?.video_url ||
+        obj?.video_url ||
+        obj?.videoUrl ||
+        (Array.isArray(obj?.output) && obj.output[0]?.video_url) ||
+        undefined;
+
+      const videoUrlDirect = extractVideoUrl(data);
+      if (videoUrlDirect) {
+        return { success: true, data };
+      }
+
+      const taskId =
+        data?.taskId ||
+        data?.task_id ||
+        data?.id ||
+        data?.output?.task_id ||
+        data?.result?.task_id ||
+        data?.output?.[0]?.task_id ||
+        data?.data?.task_id ||
+        data?.data?.output?.task_id;
+
+      if (!taskId) {
+        this.logger.warn('DashScope i2v create response contains no task id and no video url', { dataPreview: JSON.stringify(data).slice(0, 200) });
+        return { success: true, data };
+      }
+
+      const statusUrl = `https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(taskId)}`;
+      const intervalMs = 15000;
+      const maxAttempts = 40;
+      this.logger.log(`🔁 Start polling DashScope i2v task ${taskId} (${maxAttempts} attempts, ${intervalMs}ms interval)`);
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        try {
+          const statusResp = await fetch(statusUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${dashKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          if (!statusResp.ok) {
+            const errBody = await statusResp.text().catch(() => '');
+            this.logger.warn('DashScope i2v status check non-OK', { status: statusResp.status, body: errBody });
+            continue;
+          }
+          const statusData = await statusResp.json().catch(() => ({}));
+          this.logger.debug(`🔎 DashScope i2v status response (attempt ${attempt + 1}): ${JSON.stringify(statusData).slice(0,200)}`);
+
+          const statusValue =
+            (statusData?.output?.task_status ||
+              statusData?.status ||
+              statusData?.state ||
+              statusData?.task_status ||
+              ''
+            ).toString().toLowerCase();
+
+          if (statusValue === 'succeeded' || statusValue === 'success') {
+            const finalVideoUrl =
+              extractVideoUrl(statusData) ||
+              extractVideoUrl(statusData?.result) ||
+              extractVideoUrl(statusData?.output) ||
+              undefined;
+            this.logger.log(`✅ DashScope i2v task ${taskId} succeeded, videoUrl: ${String(finalVideoUrl).slice(0, 120)}`);
+            return {
+              success: true,
+              data: {
+                taskId,
+                status: statusValue,
+                videoUrl: finalVideoUrl,
+                video_url: finalVideoUrl,
+                output: { video_url: finalVideoUrl },
+                raw: statusData,
+              },
+            };
+          }
+
+          if (statusValue === 'failed' || statusValue === 'error') {
+            this.logger.error(`❌ DashScope i2v task ${taskId} failed`, { raw: statusData });
+            return { success: false, error: { message: 'DashScope i2v task failed', details: statusData } };
+          }
+        } catch (err: any) {
+          this.logger.warn('DashScope i2v polling exception, will retry', err);
+        }
+      }
+
+      this.logger.warn(`⏳ DashScope i2v task ${taskId} polling timed out after ${maxAttempts} attempts`);
+      return { success: false, error: { message: 'DashScope i2v task polling timed out' } };
+    } catch (error: any) {
+      this.logger.error('❌ DashScope i2v request exception', error);
+      return {
+        success: false,
+        error: { code: 'NETWORK_ERROR', message: error?.message || String(error) },
+      };
+    }
+    });
+  }
+
+  /**
+   * DashScope Wan2.6-r2v proxy endpoint
+   * 参考视频生成视频接口
+   */
+  @Post('dashscope/generate-wan2-6-r2v')
+  async generateWan26R2VViaDashscope(@Body() body: any, @Req() req: any) {
+    return this.withCredits(req, 'wan26-r2v', 'wan2.6-r2v', async () => {
+      const dashKey = process.env.DASHSCOPE_API_KEY;
+    if (!dashKey) {
+      this.logger.error('DASHSCOPE_API_KEY not configured');
+      return {
+        success: false,
+        error: { message: 'DASHSCOPE_API_KEY not configured on server' },
+      };
+    }
+
+    const dashUrl =
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis';
+
+    try {
+      const response = await fetch(dashUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${dashKey}`,
+          'X-DashScope-Async': 'enable',
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        this.logger.error('DashScope r2v create task failed', {
+          status: response.status,
+          body: data,
+        });
+        return {
+          success: false,
+          error: {
+            code: `HTTP_${response.status}`,
+            message: data?.message || `DashScope HTTP ${response.status}`,
+            details: data,
+          },
+        };
+      }
+
+      this.logger.log('✅ DashScope r2v task created', { resultPreview: JSON.stringify(data).slice(0, 200) });
+
+      const extractVideoUrl = (obj: any) =>
+        obj?.output?.video_url ||
+        obj?.video_url ||
+        obj?.videoUrl ||
+        (Array.isArray(obj?.output) && obj.output[0]?.video_url) ||
+        undefined;
+
+      const videoUrlDirect = extractVideoUrl(data);
+      if (videoUrlDirect) {
+        return { success: true, data };
+      }
+
+      const taskId =
+        data?.taskId ||
+        data?.task_id ||
+        data?.id ||
+        data?.output?.task_id ||
+        data?.result?.task_id ||
+        data?.output?.[0]?.task_id ||
+        data?.data?.task_id ||
+        data?.data?.output?.task_id;
+
+      if (!taskId) {
+        this.logger.warn('DashScope r2v create response contains no task id and no video url', { dataPreview: JSON.stringify(data).slice(0, 200) });
+        return { success: true, data };
+      }
+
+      const statusUrl = `https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(taskId)}`;
+      const intervalMs = 15000;
+      const maxAttempts = 40;
+      this.logger.log(`🔁 Start polling DashScope r2v task ${taskId} (${maxAttempts} attempts, ${intervalMs}ms interval)`);
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        try {
+          const statusResp = await fetch(statusUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${dashKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          if (!statusResp.ok) {
+            const errBody = await statusResp.text().catch(() => '');
+            this.logger.warn('DashScope r2v status check non-OK', { status: statusResp.status, body: errBody });
+            continue;
+          }
+          const statusData = await statusResp.json().catch(() => ({}));
+          this.logger.debug(`🔎 DashScope r2v status response (attempt ${attempt + 1}): ${JSON.stringify(statusData).slice(0,200)}`);
+
+          const statusValue =
+            (statusData?.output?.task_status ||
+              statusData?.status ||
+              statusData?.state ||
+              statusData?.task_status ||
+              ''
+            ).toString().toLowerCase();
+
+          if (statusValue === 'succeeded' || statusValue === 'success') {
+            const finalVideoUrl =
+              extractVideoUrl(statusData) ||
+              extractVideoUrl(statusData?.result) ||
+              extractVideoUrl(statusData?.output) ||
+              undefined;
+            this.logger.log(`✅ DashScope r2v task ${taskId} succeeded, videoUrl: ${String(finalVideoUrl).slice(0, 120)}`);
+            return {
+              success: true,
+              data: {
+                taskId,
+                status: statusValue,
+                videoUrl: finalVideoUrl,
+                video_url: finalVideoUrl,
+                output: { video_url: finalVideoUrl },
+                raw: statusData,
+              },
+            };
+          }
+
+          if (statusValue === 'failed' || statusValue === 'error') {
+            this.logger.error(`❌ DashScope r2v task ${taskId} failed`, { raw: statusData });
+            return { success: false, error: { message: 'DashScope r2v task failed', details: statusData } };
+          }
+        } catch (err: any) {
+          this.logger.warn('DashScope r2v polling exception, will retry', err);
+        }
+      }
+
+      this.logger.warn(`⏳ DashScope r2v task ${taskId} polling timed out after ${maxAttempts} attempts`);
+      return { success: false, error: { message: 'DashScope r2v task polling timed out' } };
+    } catch (error: any) {
+      this.logger.error('❌ DashScope r2v request exception', error);
+      return {
+        success: false,
+        error: { code: 'NETWORK_ERROR', message: error?.message || String(error) },
+      };
+    }
+    });
+  }
+
+  /**
+   * DashScope task status proxy
+   * 前端轮询会调用此接口：GET /api/ai/dashscope/tasks/:taskId
+   */
+  @Get('dashscope/tasks/:taskId')
+  async getDashscopeTaskStatus(@Param('taskId') taskId: string, @Req() req: any) {
+    this.logger.log(`🔎 DashScope task status request for ${taskId}`);
+
+    const dashKey = process.env.DASHSCOPE_API_KEY;
+    if (!dashKey) {
+      this.logger.error('DASHSCOPE_API_KEY not configured');
+      return { success: false, error: { message: 'DASHSCOPE_API_KEY not configured on server' } };
+    }
+
+    const statusUrl = `https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(taskId)}`;
+    try {
+      const response = await fetch(statusUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${dashKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        this.logger.warn('DashScope status check failed', { status: response.status, body: data });
+        return {
+          success: false,
+          error: { code: `HTTP_${response.status}`, message: data?.message || `HTTP ${response.status}`, details: data },
+        };
+      }
+
+      return { success: true, data };
+    } catch (error: any) {
+      this.logger.error('❌ DashScope status request exception', error);
+      return { success: false, error: { code: 'NETWORK_ERROR', message: error?.message || String(error) } };
+    }
   }
 
   /**
