@@ -2572,15 +2572,19 @@ function FlowInner() {
           targetHandle === "video-3"
         ) {
           // 只接受 sourceHandle 为 "video" 的连接（视频输出）
-          console.log("[wan2R2V] Video handle check:", { sourceHandle, valid: sourceHandle === "video" });
+          console.log("[wan2R2V] Video handle check:", {
+            sourceHandle,
+            valid: sourceHandle === "video",
+          });
           if (sourceHandle !== "video") return false;
           // 接受来自视频生成节点的视频输出
-          const isValidSource = [
-            "sora2Video",
-            "wan2R2V",
-            "wan26",
-          ].includes(sourceNode.type || "");
-          console.log("[wan2R2V] Source type check:", { sourceType: sourceNode.type, valid: isValidSource });
+          const isValidSource = ["sora2Video", "wan2R2V", "wan26"].includes(
+            sourceNode.type || ""
+          );
+          console.log("[wan2R2V] Source type check:", {
+            sourceType: sourceNode.type,
+            valid: isValidSource,
+          });
           return isValidSource;
         }
         return false;
@@ -3172,7 +3176,10 @@ function FlowInner() {
         setNodes((ns) =>
           ns.map((n) =>
             n.id === nodeId
-              ? { ...n, data: { ...n.data, status: "running", error: undefined } }
+              ? {
+                  ...n,
+                  data: { ...n.data, status: "running", error: undefined },
+                }
               : n
           )
         );
